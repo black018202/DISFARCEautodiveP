@@ -1,0 +1,142 @@
+local CoreGui = game:GetService("CoreGui")
+local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local UserInputService = game:GetService("UserInputService")
+local TeleportService = game:GetService("TeleportService")
+local GuiService = game:GetService("GuiService")
+
+local localPlayer = Players.LocalPlayer
+
+-- Começam desativados por padrão
+local autoDive = false
+local infStamina = false
+local toggleKey = Enum.KeyCode.P
+
+-- Configurações de velocidade e stamina do script anterior
+local y, z = 26, 16
+local speedValue = 26
+
+local q, r, s, t, u = 22, 0, 0.6, -19, 4
+local v, w, x = 0, 0, nil
+local tentandoReconectar = false
+
+local function tentarReconectar()
+    if tentandoReconectar then return end
+    tentandoReconectar = true
+    task.wait(2)
+    if game.JobId and game.JobId ~= "" then
+        TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, localPlayer)
+    else
+        TeleportService:Teleport(game.PlaceId, localPlayer)
+    end
+end
+
+TeleportService.TeleportInitFailed:Connect(function(player, teleportResult, errorMessage)
+    tentandoReconectar = false
+    task.wait(2)
+    TeleportService:Teleport(game.PlaceId, localPlayer)
+end)
+
+GuiService.ErrorMessageChanged:Connect(function(errorMessage)
+    if errorMessage and #errorMessage > 0 then
+        tentandoReconectar()
+    end
+end)
+
+local function sendKey(key)
+    VirtualInputManager:SendKeyEvent(true, key, false, game)
+    task.defer(function() VirtualInputManager:SendKeyEvent(false, key, false, game) end)
+end
+
+local function D()
+    if x and x:IsDescendantOf(Workspace) then return x end
+    local E = Workspace:FindFirstChild("TPS") or Workspace:FindFirstChild("Ball") or Workspace:FindFirstChild("Football")
+    if E then 
+        if E:IsA("BasePart") then x = E return E 
+        elseif E:IsA("Model") and E.PrimaryPart then x = E.PrimaryPart return E.PrimaryPart end 
+    end
+    for _, F in ipairs(Workspace:GetChildren()) do 
+        local G = F.Name:lower()
+        if G:find("ball") or G:find("tps") or G:find("bola") then 
+            if F:IsA("BasePart") and F.CanCollide then x = F return F 
+            elseif F:IsA("Model") and F.PrimaryPart then x = F.PrimaryPart return F.PrimaryPart end 
+        end 
+    end
+    x = nil return nil
+end
+
+local function H(I)
+    if I:FindFirstChildOfClass("Weld") or I:FindFirstChildOfClass("WeldConstraint") or I:FindFirstChildOfClass("Motor6D") then return true end
+    local J = I.Parent if J and J:FindFirstChildOfClass("Humanoid") then return true end
+    for _, K in ipairs(I:GetChildren()) do 
+        if (K:IsA("SelectionBox") or K:IsA("Highlight") or K:IsA("BillboardGui") or K:IsA("SurfaceGui")) and K.Visible then return true end 
+    end
+    local L = I.Position 
+    for _, M in ipairs(Players:GetPlayers()) do 
+        local N = M.Character 
+        if N then 
+            local O = N:FindFirstChild("HumanoidRootPart")
+            if O and (L - O.Position).Magnitude <= 3.5 then return true end 
+        end 
+    end
+    return false
+end
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == toggleKey then
+        autoDive = not autoDive
+        infStamina = autoDive -- Ativa/desativa os dois juntos pelo P
+        print("Scripts:", autoDive and "ATIVADOS (Auto Dive + Stamina)" or "DESATIVADOS")
+    end
+end)
+
+local R, S = 0, 0.03
+RunService.Heartbeat:Connect(function(T)
+    local U = localPlayer.Character if not U then return end
+
+    -- Executa o boost de velocidade/stamina se ativado
+    if infStamina then
+        local targetSpd = speedValue
+        local V = U:FindFirstChildOfClass("Humanoid")
+        local W = U:FindFirstChild("HumanoidRootPart")
+        if W and V and V.Health > 0 then
+            local X = V.MoveDirection 
+            if X.Magnitude == 0 then 
+                local Y = Vector3.new(W.AssemblyLinearVelocity.X, 0, W.AssemblyLinearVelocity.Z)
+                if Y.Magnitude > 1 then X = Y.Unit end 
+            end
+            if X.Magnitude > 0 then 
+                local Z = targetSpd - z 
+                local _ = Vector3.new(X.X, 0, X.Z).Unit * (Z * T)
+                W.CFrame = W.CFrame + _ 
+            end
+        end
+    end
+
+    if not autoDive then return end
+
+    local a0 = os.clock() if (a0 - R) < S then return end R = a0
+    local a1 = U:FindFirstChild("HumanoidRootPart")
+    local a2 = U:FindFirstChildOfClass("Humanoid") 
+    if not a1 or not a2 then return end
+    if (a0 - v) < r then return end
+    local a3 = D() if not a3 or H(a3) then return end
+    local a4 = a3.Position local a5 = a1.Position local a6 = (a4 - a5).Magnitude
+    if a6 <= q then
+        local a7 = a1.CFrame:PointToObjectSpace(a4)
+        if a7.Z >= t and a7.Z <= u then
+            if math.abs(a7.X) <= 1.5 then
+                if a7.Y >= 1.0 then 
+                    if (a0 - w) >= s and a2.FloorMaterial ~= Enum.Material.Air then 
+                        w = a0 v = a0 a2.Jump = true a2:ChangeState(Enum.HumanoidStateType.Jumping)
+                    end 
+                end
+                return
+            end
+            if a7.X > 1.5 then v = a0 sendKey(Enum.KeyCode.E) elseif a7.X < -1.5 then v = a0 sendKey(Enum.KeyCode.Q) end
+        end
+    end
+end)
