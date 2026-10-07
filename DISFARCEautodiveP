@@ -14,7 +14,7 @@ local autoDive = false
 local infStamina = false
 local toggleKey = Enum.KeyCode.P
 
--- Configurações de velocidade e stamina do script anterior
+-- Configurações de velocidade e stamina
 local y, z = 26, 16
 local speedValue = 26
 
@@ -124,18 +124,16 @@ RunService.Heartbeat:Connect(function(T)
     if not a1 or not a2 then return end
     if (a0 - v) < r then return end
     local a3 = D() if not a3 or H(a3) then return end
+    
+    -- Ignora se a bola estiver devagar ou parada (velocidade horizontal abaixo de 2.5)
+    local velBola = a3.AssemblyLinearVelocity or a3.Velocity
+    local velHorizontal = Vector3.new(velBola.X, 0, velBola.Z).Magnitude
+    if velHorizontal <= 2.5 then return end
+
     local a4 = a3.Position local a5 = a1.Position local a6 = (a4 - a5).Magnitude
     if a6 <= q then
         local a7 = a1.CFrame:PointToObjectSpace(a4)
         if a7.Z >= t and a7.Z <= u then
-            if math.abs(a7.X) <= 1.5 then
-                if a7.Y >= 1.0 then 
-                    if (a0 - w) >= s and a2.FloorMaterial ~= Enum.Material.Air then 
-                        w = a0 v = a0 a2.Jump = true a2:ChangeState(Enum.HumanoidStateType.Jumping)
-                    end 
-                end
-                return
-            end
             if a7.X > 1.5 then v = a0 sendKey(Enum.KeyCode.E) elseif a7.X < -1.5 then v = a0 sendKey(Enum.KeyCode.Q) end
         end
     end
