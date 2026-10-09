@@ -1,3 +1,10 @@
+-- Só funciona no Futebol de Rua Realista (PlaceId 14315258385)
+local ALLOWED_PLACE_ID = 14315258385
+if game.PlaceId ~= ALLOWED_PLACE_ID then
+    warn("Script bloqueado: este não é o jogo Futebol de Rua Realista.")
+    return
+end
+
 local CoreGui = game:GetService("CoreGui")
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
@@ -17,6 +24,10 @@ local toggleKey = Enum.KeyCode.P
 -- Configurações de velocidade e stamina
 local y, z = 26, 16
 local speedValue = 26
+
+-- Bola parada: o auto dive NÃO é acionado se a velocidade da bola
+-- estiver abaixo deste valor (studs/s). Aumente se ainda pegar bola parada.
+local MIN_BALL_SPEED = 4
 
 local q, r, s, t, u = 22, 0, 0.6, -19, 4
 local v, w, x = 0, 0, nil
@@ -41,7 +52,7 @@ end)
 
 GuiService.ErrorMessageChanged:Connect(function(errorMessage)
     if errorMessage and #errorMessage > 0 then
-        tentandoReconectar()
+        tentarReconectar() -- corrigido: antes chamava a variável booleana
     end
 end)
 
@@ -84,6 +95,13 @@ local function H(I)
     return false
 end
 
+-- Retorna true se a bola está parada (ou quase) e não deve acionar o auto dive
+local function bolaParada(bola)
+    local vel = bola.AssemblyLinearVelocity
+    local horizontal = Vector3.new(vel.X, 0, vel.Z).Magnitude
+    return horizontal < MIN_BALL_SPEED
+end
+
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == toggleKey then
@@ -124,11 +142,9 @@ RunService.Heartbeat:Connect(function(T)
     if not a1 or not a2 then return end
     if (a0 - v) < r then return end
     local a3 = D() if not a3 or H(a3) then return end
-    
-    -- Ignora se a bola estiver devagar ou parada (velocidade horizontal abaixo de 2.5)
-    local velBola = a3.AssemblyLinearVelocity or a3.Velocity
-    local velHorizontal = Vector3.new(velBola.X, 0, velBola.Z).Magnitude
-    if velHorizontal <= 2.5 then return end
+
+    -- Bola parada: não pega o auto dive
+    if bolaParada(a3) then return end
 
     local a4 = a3.Position local a5 = a1.Position local a6 = (a4 - a5).Magnitude
     if a6 <= q then
