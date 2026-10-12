@@ -1,9 +1,5 @@
--- Só funciona no Futebol de Rua Realista (PlaceId 14315258385)
-local ALLOWED_PLACE_ID = 14315258385
-if game.PlaceId ~= ALLOWED_PLACE_ID then
-    warn("Script bloqueado: este não é o jogo Futebol de Rua Realista.")
-    return
-end
+-- Espera 3 segundos depois de executar antes de iniciar o resto do script
+task.wait(3)
 
 local CoreGui = game:GetService("CoreGui")
 local RunService = game:GetService("RunService")
@@ -25,11 +21,23 @@ local toggleKey = Enum.KeyCode.P
 local y, z = 26, 16
 local speedValue = 26
 
--- Bola parada: o auto dive NÃO é acionado se a velocidade da bola
--- estiver abaixo deste valor (studs/s). Aumente se ainda pegar bola parada.
-local MIN_BALL_SPEED = 4
+-- Filtros do auto dive (studs/s). Ajuste se precisar.
+-- Bola parada ou devagar no chão: não mergulha abaixo desta velocidade.
+local MIN_BALL_SPEED = 9
+-- Bola no ar (acima desta altura em relação ao jogador): precisa de mais velocidade.
+local AIR_HEIGHT = 4
+local MIN_AIR_SPEED = 13
+-- A bola precisa estar VINDO na sua direção com pelo menos esta velocidade.
+local MIN_APPROACH_SPEED = 5
+-- Só mergulha se a bola chegar em você em até este tempo (segundos).
+local MAX_TIME_TO_REACH = 1.2
+-- Distância máxima (studs) que a bola pode passar de você para valer o mergulho.
+-- (alto de propósito: chute no canto passa longe de você e precisa de mergulho)
+local MAX_MISS_DISTANCE = 30
+-- Tempo mínimo entre um mergulho e outro (evita ficar mergulhando em loop).
+local DIVE_COOLDOWN = 0.7
 
-local q, r, s, t, u = 22, 0, 0.6, -19, 4
+local q, r, s, t, u = 22, DIVE_COOLDOWN, 0.6, -19, 4
 local v, w, x = 0, 0, nil
 local tentandoReconectar = false
 
@@ -95,11 +103,37 @@ local function H(I)
     return false
 end
 
--- Retorna true se a bola está parada (ou quase) e não deve acionar o auto dive
-local function bolaParada(bola)
+-- Retorna true se o auto dive deve ser ignorado:
+-- bola parada, bola devagar, ou bola devagar no ar.
+local function ignorarBola(bola, raiz)
     local vel = bola.AssemblyLinearVelocity
     local horizontal = Vector3.new(vel.X, 0, vel.Z).Magnitude
-    return horizontal < MIN_BALL_SPEED
+    local total = vel.Magnitude
+
+    -- parada ou devagar
+    if horizontal < MIN_BALL_SPEED then return true end
+
+    -- no ar e devagar
+    local altura = bola.Position.Y - raiz.Position.Y
+    if altura > AIR_HEIGHT and total < MIN_AIR_SPEED then return true end
+
+    -- a bola precisa estar vindo na sua direção (e não se afastando ou passando longe)
+    local rel = Vector3.new(bola.Position.X - raiz.Position.X, 0, bola.Position.Z - raiz.Position.Z)
+    local dist = rel.Magnitude
+    if dist < 0.1 then return false end
+    local dir = rel / dist
+    local velH = Vector3.new(vel.X, 0, vel.Z)
+    local approach = -dir:Dot(velH) -- positivo = bola vindo na sua direção
+    if approach < MIN_APPROACH_SPEED then return true end
+
+    -- tempo até chegar em você
+    if dist / approach > MAX_TIME_TO_REACH then return true end
+
+    -- por onde a bola vai passar: se passa longe, não mergulha
+    local lateral = (velH - dir * dir:Dot(velH)).Magnitude * (dist / approach)
+    if lateral > MAX_MISS_DISTANCE then return true end
+
+    return false
 end
 
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
@@ -143,8 +177,8 @@ RunService.Heartbeat:Connect(function(T)
     if (a0 - v) < r then return end
     local a3 = D() if not a3 or H(a3) then return end
 
-    -- Bola parada: não pega o auto dive
-    if bolaParada(a3) then return end
+    -- Bola parada, devagar ou devagar no ar: não pega o auto dive
+    if ignorarBola(a3, a1) then return end
 
     local a4 = a3.Position local a5 = a1.Position local a6 = (a4 - a5).Magnitude
     if a6 <= q then
