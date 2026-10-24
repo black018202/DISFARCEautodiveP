@@ -15,18 +15,22 @@ local localPlayer = Players.LocalPlayer
 -- Começam desativados por padrão
 local autoDive = false
 local infStamina = false
-local toggleKey = Enum.KeyCode.P
+local toggleKey = Enum.KeyCode.L -- liga/desliga tudo (clique duplo: só auto dive)
+local diveKey = Enum.KeyCode.F -- liga/desliga só o auto dive (a stamina fica ligada)
 
 -- Configurações de velocidade e stamina
 local y, z = 26, 16
-local speedValue = 26
+local speedValue = 24
 
 -- Filtros do auto dive (studs/s). Ajuste se precisar.
 -- Bola parada ou devagar no chão: não mergulha abaixo desta velocidade.
-local MIN_BALL_SPEED = 9
+local MIN_BALL_SPEED = 11
 -- Bola no ar (acima desta altura em relação ao jogador): precisa de mais velocidade.
 local AIR_HEIGHT = 4
 local MIN_AIR_SPEED = 13
+-- Bola acima da sua cabeça: se o centro da bola estiver mais alto que isso
+-- (studs acima do centro do seu personagem), ela passa por cima e não mergulha.
+local OVER_HEAD_HEIGHT = 4.0
 -- A bola precisa estar VINDO na sua direção com pelo menos esta velocidade.
 local MIN_APPROACH_SPEED = 5
 -- Só mergulha se a bola chegar em você em até este tempo (segundos).
@@ -36,8 +40,11 @@ local MAX_TIME_TO_REACH = 1.2
 local MAX_MISS_DISTANCE = 30
 -- Tempo mínimo entre um mergulho e outro (evita ficar mergulhando em loop).
 local DIVE_COOLDOWN = 0.7
+local bolaNosPes = false -- true enquanto a bola está nos pés de alguém
+local bolaNosMeusPes = false -- true se a bola estava nos MEUS pés (não pula quando eu chuto)
 
-local q, r, s, t, u = 22, DIVE_COOLDOWN, 0.6, -19, 4
+-- q = alcance (studs) | t = quão à frente ele enxerga | u = quão atrás
+local q, r, s, t, u = 21, DIVE_COOLDOWN, 0.6, -19, 4
 local v, w, x = 0, 0, nil
 local tentandoReconectar = false
 
@@ -113,8 +120,12 @@ local function ignorarBola(bola, raiz)
     -- parada ou devagar
     if horizontal < MIN_BALL_SPEED then return true end
 
-    -- no ar e devagar
     local altura = bola.Position.Y - raiz.Position.Y
+
+    -- passando por cima da cabeça: não mergulha
+    if altura > OVER_HEAD_HEIGHT then return true end
+
+    -- no ar e devagar
     if altura > AIR_HEIGHT and total < MIN_AIR_SPEED then return true end
 
     -- a bola precisa estar vindo na sua direção (e não se afastando ou passando longe)
@@ -136,12 +147,32 @@ local function ignorarBola(bola, raiz)
     return false
 end
 
+-- Tempo máximo (segundos) entre dois cliques no P para contar como clique duplo.
+local DOUBLE_CLICK_TIME = 0.35
+local ultimoClique = 0
+
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == toggleKey then
+        local agora = os.clock()
+        if (agora - ultimoClique) <= DOUBLE_CLICK_TIME then
+            -- Clique duplo: desliga a stamina/speed e deixa só o auto dive
+            autoDive = true
+            infStamina = false
+            ultimoClique = 0 -- evita que um 3º clique conte como outro duplo
+            print("Scripts: SOMENTE Auto Dive (Stamina/Speed desativados)")
+        else
+            -- Clique simples: liga/desliga tudo (se estiver só com auto dive, desliga normalmente)
+            autoDive = not autoDive
+            infStamina = autoDive
+            ultimoClique = agora
+            print("Scripts:", autoDive and "ATIVADOS (Auto Dive + Stamina)" or "DESATIVADOS")
+        end
+    elseif input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == diveKey then
+        -- F: só liga/desliga o auto dive. A stamina/speed fica sempre ligada.
         autoDive = not autoDive
-        infStamina = autoDive -- Ativa/desativa os dois juntos pelo P
-        print("Scripts:", autoDive and "ATIVADOS (Auto Dive + Stamina)" or "DESATIVADOS")
+        infStamina = true
+        print("F:", autoDive and "Auto Dive ATIVADO (+ Stamina)" or "Auto Dive DESATIVADO (Stamina continua)")
     end
 end)
 
@@ -174,8 +205,35 @@ RunService.Heartbeat:Connect(function(T)
     local a1 = U:FindFirstChild("HumanoidRootPart")
     local a2 = U:FindFirstChildOfClass("Humanoid") 
     if not a1 or not a2 then return end
+    local a3 = D() if not a3 then return end
+
+    -- Acompanha a bola nos pés de alguém e detecta o momento em que ela SAI
+    -- dos pés (o chute). Isso é lido antes do cooldown para não perder o chute.
+    local nosPes = H(a3)
+    local acabouDeChutar = false
+    if nosPes then
+        bolaNosPes = true
+        -- bola nos meus próprios pés? então se ela sair, fui eu que chutei
+        bolaNosMeusPes = (a3.Position - a1.Position).Magnitude <= 3.5
+    elseif bolaNosPes then
+        bolaNosPes = false
+        acabouDeChutar = not bolaNosMeusPes
+    end
+
     if (a0 - v) < r then return end
-    local a3 = D() if not a3 or H(a3) then return end
+    if nosPes then return end
+
+    -- CHUTE: a bola saiu dos pés de outro jogador. Ignora os filtros de
+    -- velocidade (a bola ainda está pegando velocidade) e pula na hora.
+    if acabouDeChutar then
+        local k4 = a3.Position local k6 = (k4 - a1.Position).Magnitude
+        local k7 = a1.CFrame:PointToObjectSpace(k4)
+        if k6 <= q and k7.Z >= t and k7.Z <= u and (k7.X > 1.5 or k7.X < -1.5) then
+            v = a0
+            sendKey((k7.X > 1.5) and Enum.KeyCode.E or Enum.KeyCode.Q)
+        end
+        return
+    end
 
     -- Bola parada, devagar ou devagar no ar: não pega o auto dive
     if ignorarBola(a3, a1) then return end
@@ -184,7 +242,11 @@ RunService.Heartbeat:Connect(function(T)
     if a6 <= q then
         local a7 = a1.CFrame:PointToObjectSpace(a4)
         if a7.Z >= t and a7.Z <= u then
-            if a7.X > 1.5 then v = a0 sendKey(Enum.KeyCode.E) elseif a7.X < -1.5 then v = a0 sendKey(Enum.KeyCode.Q) end
+            if a7.X > 1.5 or a7.X < -1.5 then
+                -- pula na hora
+                v = a0
+                sendKey((a7.X > 1.5) and Enum.KeyCode.E or Enum.KeyCode.Q)
+            end
         end
     end
 end)
