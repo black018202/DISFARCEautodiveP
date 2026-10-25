@@ -16,7 +16,10 @@ local localPlayer = Players.LocalPlayer
 local autoDive = false
 local infStamina = false
 local toggleKey = Enum.KeyCode.L -- liga/desliga tudo (clique duplo: só auto dive)
-local diveKey = Enum.KeyCode.F -- liga/desliga só o auto dive (a stamina fica ligada)
+local diveKey = Enum.KeyCode.F -- liga/desliga só o auto dive
+-- Modo 2 = clique duplo no L (auto dive SEM stamina). Nesse modo a F também não liga a stamina.
+-- Modo 1 = normal (a F liga/desliga o auto dive e a stamina fica ligada).
+local modoSemStamina = false
 
 -- Configurações de velocidade e stamina
 local y, z = 26, 16
@@ -159,20 +162,28 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
             -- Clique duplo: desliga a stamina/speed e deixa só o auto dive
             autoDive = true
             infStamina = false
+            modoSemStamina = true -- entra no modo 2
             ultimoClique = 0 -- evita que um 3º clique conte como outro duplo
             print("Scripts: SOMENTE Auto Dive (Stamina/Speed desativados)")
         else
             -- Clique simples: liga/desliga tudo (se estiver só com auto dive, desliga normalmente)
             autoDive = not autoDive
             infStamina = autoDive
+            modoSemStamina = false -- clique simples volta ao modo 1
             ultimoClique = agora
             print("Scripts:", autoDive and "ATIVADOS (Auto Dive + Stamina)" or "DESATIVADOS")
         end
     elseif input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == diveKey then
-        -- F: só liga/desliga o auto dive. A stamina/speed fica sempre ligada.
         autoDive = not autoDive
-        infStamina = true
-        print("F:", autoDive and "Auto Dive ATIVADO (+ Stamina)" or "Auto Dive DESATIVADO (Stamina continua)")
+        if modoSemStamina then
+            -- Modo 2: liga/desliga o auto dive, sem stamina em nenhum dos dois estados.
+            infStamina = false
+            print("F (modo 2):", autoDive and "Auto Dive ATIVADO (sem stamina)" or "Auto Dive DESATIVADO (sem stamina)")
+        else
+            -- Modo 1: liga/desliga o auto dive. A stamina/speed fica sempre ligada.
+            infStamina = true
+            print("F:", autoDive and "Auto Dive ATIVADO (+ Stamina)" or "Auto Dive DESATIVADO (Stamina continua)")
+        end
     end
 end)
 
