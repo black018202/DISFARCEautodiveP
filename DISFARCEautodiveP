@@ -20,15 +20,6 @@ local diveKey = Enum.KeyCode.F -- liga/desliga só o auto dive
 -- Modo 2 = clique duplo no L (auto dive SEM stamina). Nesse modo a F também não liga a stamina.
 -- Modo 1 = normal (a F liga/desliga o auto dive e a stamina fica ligada).
 local modoSemStamina = false
--- Tecla M: auto dive para o 7v7 (goleira grande). Igual ao da F, mas defende também
--- a bola ALTA que passa por cima da cabeça do seu personagem.
-local goleiraKey = Enum.KeyCode.M
-local modo7v7 = false
--- Alcance (studs) do auto dive só no modo M (o normal continua com o alcance q).
-local RANGE_7V7 = 25
--- No modo M, a bola alta e devagar também é defendida: velocidade mínima no ar (studs/s).
--- (o normal usa MIN_AIR_SPEED = 13)
-local MIN_AIR_SPEED_7V7 = 10
 
 -- Configurações de velocidade e stamina
 local y, z = 26, 16
@@ -134,13 +125,11 @@ local function ignorarBola(bola, raiz)
 
     local altura = bola.Position.Y - raiz.Position.Y
 
-    -- passando por cima da cabeça: não mergulha (menos no modo 7v7 da tecla M,
-    -- onde a goleira é grande e a bola alta também é defendida)
-    if not modo7v7 and altura > OVER_HEAD_HEIGHT then return true end
+    -- passando por cima da cabeça: não mergulha
+    if altura > OVER_HEAD_HEIGHT then return true end
 
     -- no ar e devagar
-    local minAr = modo7v7 and MIN_AIR_SPEED_7V7 or MIN_AIR_SPEED
-    if altura > AIR_HEIGHT and total < minAr then return true end
+    if altura > AIR_HEIGHT and total < MIN_AIR_SPEED then return true end
 
     -- a bola precisa estar vindo na sua direção (e não se afastando ou passando longe)
     local rel = Vector3.new(bola.Position.X - raiz.Position.X, 0, bola.Position.Z - raiz.Position.Z)
@@ -174,7 +163,6 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
             autoDive = true
             infStamina = false
             modoSemStamina = true -- entra no modo 2
-            modo7v7 = false
             ultimoClique = 0 -- evita que um 3º clique conte como outro duplo
             print("Scripts: SOMENTE Auto Dive (Stamina/Speed desativados)")
         else
@@ -182,21 +170,11 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
             autoDive = not autoDive
             infStamina = autoDive
             modoSemStamina = false -- clique simples volta ao modo 1
-            modo7v7 = false
             ultimoClique = agora
             print("Scripts:", autoDive and "ATIVADOS (Auto Dive + Stamina)" or "DESATIVADOS")
         end
-    elseif input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == goleiraKey then
-        -- M: auto dive 7v7 (defende bola alta). Funciona igual à F quanto à stamina.
-        -- um clique ativa, o próximo clique desativa
-        autoDive = not autoDive
-        modo7v7 = autoDive
-        -- ligando: auto dive + stamina (a menos que esteja no modo 2); desligando: desliga TUDO
-        infStamina = autoDive and not modoSemStamina
-        print("M (7v7):", autoDive and "Auto Dive 7v7 ATIVADO (defende bola alta)" or "TUDO DESATIVADO (auto dive e stamina)")
     elseif input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == diveKey then
         autoDive = not autoDive
-        modo7v7 = false
         if modoSemStamina then
             -- Modo 2: liga/desliga o auto dive, sem stamina em nenhum dos dois estados.
             infStamina = false
@@ -261,7 +239,7 @@ RunService.Heartbeat:Connect(function(T)
     if acabouDeChutar then
         local k4 = a3.Position local k6 = (k4 - a1.Position).Magnitude
         local k7 = a1.CFrame:PointToObjectSpace(k4)
-        if k6 <= (modo7v7 and RANGE_7V7 or q) and k7.Z >= t and k7.Z <= u and (k7.X > 1.5 or k7.X < -1.5) then
+        if k6 <= q and k7.Z >= t and k7.Z <= u and (k7.X > 1.5 or k7.X < -1.5) then
             v = a0
             sendKey((k7.X > 1.5) and Enum.KeyCode.E or Enum.KeyCode.Q)
         end
@@ -272,7 +250,7 @@ RunService.Heartbeat:Connect(function(T)
     if ignorarBola(a3, a1) then return end
 
     local a4 = a3.Position local a5 = a1.Position local a6 = (a4 - a5).Magnitude
-    if a6 <= (modo7v7 and RANGE_7V7 or q) then
+    if a6 <= q then
         local a7 = a1.CFrame:PointToObjectSpace(a4)
         if a7.Z >= t and a7.Z <= u then
             if a7.X > 1.5 or a7.X < -1.5 then
