@@ -25,29 +25,29 @@ local modoSemStamina = false
 local y, z = 26, 16
 local speedValue = 24
 
--- Filtros do auto dive (studs/s). Ajuste se precisar.
--- Bola parada ou devagar no chão: não mergulha abaixo desta velocidade.
-local MIN_BALL_SPEED = 11
--- Bola no ar (acima desta altura em relação ao jogador): precisa de mais velocidade.
-local AIR_HEIGHT = 4
-local MIN_AIR_SPEED = 13
--- Bola acima da sua cabeça: se o centro da bola estiver mais alto que isso
--- (studs acima do centro do seu personagem), ela passa por cima e não mergulha.
-local OVER_HEAD_HEIGHT = 4.0
--- A bola precisa estar VINDO na sua direção com pelo menos esta velocidade.
-local MIN_APPROACH_SPEED = 5
--- Só mergulha se a bola chegar em você em até este tempo (segundos).
-local MAX_TIME_TO_REACH = 1.2
--- Distância máxima (studs) que a bola pode passar de você para valer o mergulho.
--- (alto de propósito: chute no canto passa longe de você e precisa de mergulho)
-local MAX_MISS_DISTANCE = 30
--- Tempo mínimo entre um mergulho e outro (evita ficar mergulhando em loop).
-local DIVE_COOLDOWN = 0.7
-local bolaNosPes = false -- true enquanto a bola está nos pés de alguém
-local bolaNosMeusPes = false -- true se a bola estava nos MEUS pés (não pula quando eu chuto)
+-- AUTO DIVE (o mesmo do script de Farm): pega a bola olhando a TRAJETÓRIA,
+-- onde ela cruza a linha do goleiro, e confirma o lado antes de pular.
+local DIVE_RANGE = 22         -- alcance pra bola vindo de frente (antes 22): enxerga chute forte de mais longe
+local DIVE_FRONT = -32           -- até onde na frente (Z) já enxerga a bola vindo (antes -19)
+local DIVE_TRIGGER_TIME = 0.30   -- pula quando a bola chega em até X s (base)...
+local DIVE_LATERAL_TIME = 0.012  -- ...mais X s por stud de distância lateral (bola longe do goleiro = pula antes)
+local DIVE_MAX_LATERAL = 20      -- limite da distância lateral usada nessa conta
+local DIVE_URGENT_TIME = 0.15    -- bola chegando em menos que isso: pula na hora, sem confirmar
+local DIVE_CONFIRM_FRAMES = 2    -- senão precisa dar o MESMO lado em X checagens seguidas
+local DIVE_CONFIRM_WINDOW = 0.1  -- as checagens precisam ser seguidas (em segundos)
+local DIVE_MAX_BALL_HEIGHT = 3.5 -- bola mais alta que isso acima do seu HumanoidRootPart = por cima da cabeça, não pula
+-- BOLA RETA NO PERSONAGEM: se a bola vai passar perto do centro do seu personagem ela bate no
+-- corpo e não precisa de mergulho. A "zona reta" cresce com o tempo até a bola chegar, porque
+-- a previsão erra mais quando a bola ainda está longe. Aumente se ainda pular pro lado à toa.
+local DIVE_STRAIGHT_BASE = 2.2       -- studs de cada lado do centro (base)
+local DIVE_STRAIGHT_PER_SEC = 2.5    -- + X studs por segundo de antecedência
+local DIVE_FALL_SPEED = 12       -- bola alta só conta como "caindo" se descer mais rápido que isso (studs/s)
+local DIVE_HIGH_STRAIGHT = 4         -- bola ALTA indo a menos de X studs de você (reta no personagem) = por cima da cabeça, não pula
+local FAST_BALL = 35            -- acima disso a bola é chute/passe: perto de jogador não conta como "bola presa"
+
 
 -- q = alcance (studs) | t = quão à frente ele enxerga | u = quão atrás
-local q, r, s, t, u = 21, DIVE_COOLDOWN, 0.6, -19, 4
+local q, r, s, t, u = 22, 0.03, 0.6, -19, 4
 local v, w, x = 0, 0, nil
 local tentandoReconectar = false
 
@@ -113,42 +113,78 @@ local function H(I)
     return false
 end
 
--- Retorna true se o auto dive deve ser ignorado:
--- bola parada, bola devagar, ou bola devagar no ar.
-local function ignorarBola(bola, raiz)
-    local vel = bola.AssemblyLinearVelocity
-    local horizontal = Vector3.new(vel.X, 0, vel.Z).Magnitude
-    local total = vel.Magnitude
+local pendingKey, pendingCount, pendingTime = nil, 0, 0
+local lastBallObj, lastBallPos, lastBallTime = nil, nil, 0
 
-    -- parada ou devagar
-    if horizontal < MIN_BALL_SPEED then return true end
+-- COMPENSAÇÃO DE PING: a bola que você vê está atrasada em relação ao servidor,
+-- então com ping alto o pulo precisa sair um pouco mais cedo.
+local Stats = game:GetService("Stats")
+local DIVE_PING_COMP = 0.5   -- fração do ping somada à antecedência do pulo (0 = desliga)
+local pingSeconds = 0
 
-    local altura = bola.Position.Y - raiz.Position.Y
+task.spawn(function()
+    while true do
+        local ok, ms = pcall(function()
+            return Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
+        end)
+        if ok and type(ms) == "number" then
+            pingSeconds = math.clamp(ms / 1000, 0, 0.4)
+        end
+        task.wait(0.5)
+    end
+end)
 
-    -- passando por cima da cabeça: não mergulha
-    if altura > OVER_HEAD_HEIGHT then return true end
-
-    -- no ar e devagar
-    if altura > AIR_HEIGHT and total < MIN_AIR_SPEED then return true end
-
-    -- a bola precisa estar vindo na sua direção (e não se afastando ou passando longe)
-    local rel = Vector3.new(bola.Position.X - raiz.Position.X, 0, bola.Position.Z - raiz.Position.Z)
-    local dist = rel.Magnitude
-    if dist < 0.1 then return false end
-    local dir = rel / dist
-    local velH = Vector3.new(vel.X, 0, vel.Z)
-    local approach = -dir:Dot(velH) -- positivo = bola vindo na sua direção
-    if approach < MIN_APPROACH_SPEED then return true end
-
-    -- tempo até chegar em você
-    if dist / approach > MAX_TIME_TO_REACH then return true end
-
-    -- por onde a bola vai passar: se passa longe, não mergulha
-    local lateral = (velH - dir * dir:Dot(velH)).Magnitude * (dist / approach)
-    if lateral > MAX_MISS_DISTANCE then return true end
-
+-- Bola presa (solda/personagem): vale mesmo com a bola rápida
+local function isBallAttached(I)
+    if I:FindFirstChildOfClass("Weld") or I:FindFirstChildOfClass("WeldConstraint") or I:FindFirstChildOfClass("Motor6D") then return true end
+    local J = I.Parent if J and J:FindFirstChildOfClass("Humanoid") then return true end
     return false
 end
+
+-- Decide o lado do pulo. Retorna (tecla, urgente) ou nil
+local function diveKeyFor(a1, ballPos, ballVel)
+    local a7 = a1.CFrame:PointToObjectSpace(ballPos)
+    local dist = (ballPos - a1.Position).Magnitude
+
+    -- velocidade da bola em relação ao goleiro (Z > 0 = bola vindo na direção dele)
+    local lv = a1.CFrame:VectorToObjectSpace(ballVel)
+
+    if a7.Z < 0 and lv.Z > 3 then
+        -- TRAJETÓRIA: bola vindo de frente
+        if dist > DIVE_RANGE or a7.Z < DIVE_FRONT then return nil end
+        local tReach = -a7.Z / lv.Z                         -- tempo até a bola chegar na linha do goleiro
+        local crossX = a7.X + lv.X * tReach                 -- onde ela vai cruzar (esquerda/direita)
+        local need = DIVE_TRIGGER_TIME + math.min(math.abs(crossX), DIVE_MAX_LATERAL) * DIVE_LATERAL_TIME
+                   + pingSeconds * DIVE_PING_COMP
+        if tReach > need then return nil end                -- ainda cedo: espera pra não errar o lado
+
+        -- altura prevista da bola quando chegar na sua linha (com gravidade)
+        local predictedY = ballPos.Y + ballVel.Y * tReach - 0.5 * Workspace.Gravity * tReach * tReach
+        if predictedY - a1.Position.Y > DIVE_MAX_BALL_HEIGHT then return nil end -- vai passar por cima da cabeça
+
+        -- bola ALTA vindo reta no seu personagem (não pros lados): passa por cima da cabeça.
+        -- Usa a altura de AGORA (não só a prevista pela gravidade), então não pula nela.
+        local heightNow = ballPos.Y - a1.Position.Y
+        if heightNow > DIVE_MAX_BALL_HEIGHT and ballVel.Y > -DIVE_FALL_SPEED
+            and math.abs(crossX) < DIVE_HIGH_STRAIGHT then return nil end
+
+        local urgent = tReach <= DIVE_URGENT_TIME + pingSeconds * DIVE_PING_COMP
+        -- zona reta: bola indo no corpo do personagem (cresce com o tempo até chegar)
+        local straight = DIVE_STRAIGHT_BASE + DIVE_STRAIGHT_PER_SEC * tReach
+        if crossX > straight then return Enum.KeyCode.E, urgent
+        elseif crossX < -straight then return Enum.KeyCode.Q, urgent end
+        return nil                                          -- vai no meio, direto no goleiro
+    end
+
+    -- bola não vem de frente: regra original (lado pela posição atual)
+    if ballPos.Y - a1.Position.Y > DIVE_MAX_BALL_HEIGHT then return nil end -- bola já está acima da cabeça
+    if dist > q or a7.Z < t or a7.Z > u then return nil end
+    -- bola que JÁ PASSOU por você (na linha ou atrás e indo pra trás): mergulhar agora é pro lado errado
+    if a7.Z > -1 and lv.Z > 3 then return nil end
+    if a7.X > DIVE_STRAIGHT_BASE then return Enum.KeyCode.E, false elseif a7.X < -DIVE_STRAIGHT_BASE then return Enum.KeyCode.Q, false end
+    return nil
+end
+
 
 -- Tempo máximo (segundos) entre dois cliques no P para contar como clique duplo.
 local DOUBLE_CLICK_TIME = 0.35
@@ -187,7 +223,8 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
     end
 end)
 
-local R, S = 0, 0.03
+local R, S = 0, 0 -- checa a bola a cada frame
+
 RunService.Heartbeat:Connect(function(T)
     local U = localPlayer.Character if not U then return end
 
@@ -216,48 +253,48 @@ RunService.Heartbeat:Connect(function(T)
     local a1 = U:FindFirstChild("HumanoidRootPart")
     local a2 = U:FindFirstChildOfClass("Humanoid") 
     if not a1 or not a2 then return end
-    local a3 = D() if not a3 then return end
-
-    -- Acompanha a bola nos pés de alguém e detecta o momento em que ela SAI
-    -- dos pés (o chute). Isso é lido antes do cooldown para não perder o chute.
-    local nosPes = H(a3)
-    local acabouDeChutar = false
-    if nosPes then
-        bolaNosPes = true
-        -- bola nos meus próprios pés? então se ela sair, fui eu que chutei
-        bolaNosMeusPes = (a3.Position - a1.Position).Magnitude <= 3.5
-    elseif bolaNosPes then
-        bolaNosPes = false
-        acabouDeChutar = not bolaNosMeusPes
-    end
-
     if (a0 - v) < r then return end
-    if nosPes then return end
+    local a3 = D() if not a3 then return end
+    
+    local velBola = a3.AssemblyLinearVelocity or a3.Velocity
 
-    -- CHUTE: a bola saiu dos pés de outro jogador. Ignora os filtros de
-    -- velocidade (a bola ainda está pegando velocidade) e pula na hora.
-    if acabouDeChutar then
-        local k4 = a3.Position local k6 = (k4 - a1.Position).Magnitude
-        local k7 = a1.CFrame:PointToObjectSpace(k4)
-        if k6 <= q and k7.Z >= t and k7.Z <= u and (k7.X > 1.5 or k7.X < -1.5) then
-            v = a0
-            sendKey((k7.X > 1.5) and Enum.KeyCode.E or Enum.KeyCode.Q)
-        end
+    -- Se a velocidade informada vier zerada/baixa demais, usa o deslocamento real da bola entre frames
+    local nowPos = a3.Position
+    if lastBallObj == a3 and (a0 - lastBallTime) > 0 and (a0 - lastBallTime) < 0.1 then
+        local posVel = (nowPos - lastBallPos) / (a0 - lastBallTime)
+        local posH = Vector3.new(posVel.X, 0, posVel.Z).Magnitude
+        local repH = Vector3.new(velBola.X, 0, velBola.Z).Magnitude
+        if posH > 8 and posH < 300 and posH > repH * 1.5 then velBola = posVel end
+    end
+    lastBallObj, lastBallPos, lastBallTime = a3, nowPos, a0
+
+    -- Ignora se a bola estiver devagar ou parada (velocidade horizontal abaixo de 2.5)
+    local velHorizontal = Vector3.new(velBola.X, 0, velBola.Z).Magnitude
+    if velHorizontal <= 2.5 then return end
+
+    -- Bola presa: devagar usa a checagem completa (H); chute/passe rápido só olha se está presa de verdade,
+    -- assim um jogador perto da bola não bloqueia o pulo
+    if velHorizontal < FAST_BALL then
+        if H(a3) then return end
+    elseif isBallAttached(a3) then
         return
     end
 
-    -- Bola parada, devagar ou devagar no ar: não pega o auto dive
-    if ignorarBola(a3, a1) then return end
-
-    local a4 = a3.Position local a5 = a1.Position local a6 = (a4 - a5).Magnitude
-    if a6 <= q then
-        local a7 = a1.CFrame:PointToObjectSpace(a4)
-        if a7.Z >= t and a7.Z <= u then
-            if a7.X > 1.5 or a7.X < -1.5 then
-                -- pula na hora
-                v = a0
-                sendKey((a7.X > 1.5) and Enum.KeyCode.E or Enum.KeyCode.Q)
-            end
+    local diveTecla, urgent = diveKeyFor(a1, a3.Position, velBola)
+    if diveTecla then
+        -- confirma o lado em checagens seguidas antes de pular (bola chegando já = pula na hora)
+        if diveTecla == pendingKey and (a0 - pendingTime) <= DIVE_CONFIRM_WINDOW then
+            pendingCount += 1
+        else
+            pendingKey, pendingCount = diveTecla, 1
         end
+        pendingTime = a0
+
+        if urgent or pendingCount >= DIVE_CONFIRM_FRAMES then
+            pendingKey, pendingCount = nil, 0
+            v = a0 sendKey(diveTecla)
+        end
+    else
+        pendingKey, pendingCount = nil, 0
     end
 end)
